@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-14
+
+### Added
+
+- **Server-side conversation context** - `WithPreviousResponseId()` for efficient multi-turn conversations
+- **Message storage control** - `WithStoreMessages()` to enable/disable server-side context storage
+- **Encrypted content support** - `WithEncryptedContent()` for reasoning trace preservation
+- **`/context` command** - Toggle between response_id (server) and history (client) context modes
+- **`/context store` command** - Toggle server-side message storage in interactive client
+- **Integration tests** - Tests for multi-turn conversations with and without `previous_response_id`
+
+### Changed
+
+- Interactive client now defaults to `response_id` mode with storage enabled
+- Response ID captured and chained automatically in interactive client
+
 ## [0.2.0] - 2026-02-14
 
 ### Added
@@ -39,5 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Structured errors** - Error types with codes, retryability, and gRPC status mapping
 - **Interactive test client** - REPL for manual testing with chat and image generation
 
+[0.3.0]: https://github.com/roelfdiedericks/xai-go/releases/tag/v0.3.0
 [0.2.0]: https://github.com/roelfdiedericks/xai-go/releases/tag/v0.2.0
 [0.1.0]: https://github.com/roelfdiedericks/xai-go/releases/tag/v0.1.0

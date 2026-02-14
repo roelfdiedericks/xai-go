@@ -53,6 +53,31 @@
 //	    fmt.Print(chunk.Delta)
 //	}
 //
+// # Multi-Turn Conversations
+//
+// For multi-turn conversations, use [ChatRequest.WithPreviousResponseId] to chain
+// responses using xAI's server-side context storage instead of resending full history:
+//
+//	// First turn: enable storage
+//	req1 := xai.NewChatRequest().
+//	    SystemMessage("You are helpful.").
+//	    UserMessage("My name is Bob.").
+//	    WithStoreMessages(true)
+//
+//	resp1, _ := client.CompleteChat(ctx, req1)
+//
+//	// Second turn: chain from previous response
+//	req2 := xai.NewChatRequest().
+//	    WithPreviousResponseId(resp1.ID).
+//	    WithStoreMessages(true).
+//	    UserMessage("What is my name?")
+//
+//	resp2, _ := client.CompleteChat(ctx, req2)
+//	// resp2 will reference "Bob" from server-side context
+//
+// Note: [ChatRequest.WithStoreMessages](true) must be set on each turn to continue the chain.
+// Responses are stored for 30 days.
+//
 // # Tool Calling
 //
 // Define tools using [NewFunctionTool], [NewWebSearchTool], [NewXSearchTool], etc:

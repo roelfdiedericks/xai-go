@@ -106,6 +106,36 @@ for {
 }
 ```
 
+### Multi-Turn Conversations with Server-Side Context
+
+Instead of sending the full conversation history with each request, you can use xAI's server-side context storage with `previous_response_id`. This is more efficient and required for preserving reasoning traces in reasoning models.
+
+```go
+// First turn: enable storage
+req1 := xai.NewChatRequest().
+    SystemMessage("You are a helpful assistant.").
+    UserMessage("My name is Alice.").
+    WithStoreMessages(true)  // Enable server-side storage
+
+resp1, err := client.CompleteChat(ctx, req1)
+// resp1.ID contains the response ID
+
+// Second turn: reference previous response, only send new message
+req2 := xai.NewChatRequest().
+    WithPreviousResponseId(resp1.ID).  // Chain from previous
+    WithStoreMessages(true).            // Keep storing for further turns
+    UserMessage("What is my name?")
+
+resp2, err := client.CompleteChat(ctx, req2)
+// The model remembers "Alice" from server-side context
+```
+
+Key points:
+- `WithStoreMessages(true)` must be set on **each turn** to continue the chain
+- Responses are stored for 30 days
+- You still pay for the full context, but benefit from cached prompt tokens
+- Use `WithEncryptedContent(true)` for reasoning trace preservation
+
 ## Tool Calling
 
 ```go
@@ -253,6 +283,11 @@ Commands within the REPL:
 - `/stream` - Toggle streaming mode
 - `/clear` - Clear conversation history
 - `/info` - Show current settings
+- `/context` - Show context mode (response_id vs history)
+- `/context mode` - Toggle between server-side (response_id) and client-side (history) context
+- `/context store` - Toggle server-side message storage
+- `/tools` - Show enabled tools
+- `/tools <name>` - Toggle tool (web, x, code, all, off)
 - `/image <prompt>` - Generate an image (options: `-wide`, `-tall`, `-2k`)
 - `/image-model` - Show/change image model
 - `/image-models` - List available image models

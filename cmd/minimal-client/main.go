@@ -80,11 +80,17 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 		codeExecution: true,
 	}
 
+	// Context management - default to using response ID mode with storage
+	useResponseId := true
+	storeMessages := true
+	var lastResponseId string
+
 	fmt.Println("=== xAI Interactive Chat ===")
 	fmt.Printf("Model: %s\n", model)
 	fmt.Printf("Streaming: %v\n", stream)
 	fmt.Printf("Tools: %s\n", tools)
-	fmt.Println("Commands: /help, /model, /system, /stream, /tools, /image, /quit")
+	fmt.Printf("Context: %s\n", contextModeString(useResponseId, storeMessages))
+	fmt.Println("Commands: /help, /model, /system, /stream, /tools, /context, /image, /quit")
 	fmt.Println("---")
 
 	reader := bufio.NewReader(os.Stdin)
@@ -119,6 +125,7 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 
 			case input == "/clear" || input == "/c":
 				history = nil
+				lastResponseId = ""
 				fmt.Println("Conversation cleared.")
 				continue
 
@@ -209,27 +216,67 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 				}
 				continue
 
+			case input == "/context" || input == "/ctx":
+				fmt.Printf("Context mode: %s\n", contextModeString(useResponseId, storeMessages))
+				fmt.Println("Usage: /context mode|store")
+				fmt.Println("  mode  - Toggle between response_id (server) and history (client)")
+				fmt.Println("  store - Toggle server-side message storage")
+				if lastResponseId != "" {
+					fmt.Printf("Last response ID: %s\n", lastResponseId)
+				}
+				continue
+
+			case strings.HasPrefix(input, "/context "):
+				arg := strings.TrimPrefix(input, "/context ")
+				switch arg {
+				case "mode":
+					useResponseId = !useResponseId
+					if useResponseId {
+						fmt.Println("Context mode: response_id (server-side)")
+						fmt.Println("Conversation will use previous_response_id for context")
+					} else {
+						fmt.Println("Context mode: history (client-side)")
+						fmt.Println("Full message history will be sent with each request")
+					}
+				case "store":
+					storeMessages = !storeMessages
+					fmt.Printf("Store messages: %v\n", storeMessages)
+					if !storeMessages && useResponseId {
+						fmt.Println("Warning: response_id mode requires storage to be enabled")
+					}
+				default:
+					fmt.Println("Unknown option. Use: mode, store")
+				}
+				continue
+
 			default:
 				fmt.Println("Unknown command. Type /help for available commands.")
 				continue
 			}
 		}
 
-		// Add user message to history
+		// Add user message to history (always keep for fallback/display)
 		history = append(history, &message{role: "user", content: input})
 
-		// Build request
+		// Build request based on context mode
 		req := xai.NewChatRequest().
-			SystemMessage(systemPrompt).
-			WithModel(model)
+			WithModel(model).
+			WithStoreMessages(storeMessages)
 
-		// Add history
-		for _, msg := range history {
-			switch msg.role {
-			case "user":
-				req.UserMessage(msg.content)
-			case "assistant":
-				req.AssistantMessage(msg.content)
+		if useResponseId && lastResponseId != "" {
+			// Use server-side context - only send the new message
+			req.WithPreviousResponseId(lastResponseId).
+				UserMessage(input)
+		} else {
+			// Use client-side history - send everything
+			req.SystemMessage(systemPrompt)
+			for _, msg := range history {
+				switch msg.role {
+				case "user":
+					req.UserMessage(msg.content)
+				case "assistant":
+					req.AssistantMessage(msg.content)
+				}
 			}
 		}
 
@@ -249,10 +296,11 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 		fmt.Print("\nAssistant: ")
 
 		var response string
+		var responseId string
 		if stream {
-			response, err = streamResponse(ctx, client, req)
+			response, responseId, err = streamResponse(ctx, client, req)
 		} else {
-			response, err = blockingResponse(ctx, client, req)
+			response, responseId, err = blockingResponse(ctx, client, req)
 		}
 		cancel()
 
@@ -265,6 +313,11 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 
 		fmt.Println()
 
+		// Update last response ID for next turn
+		if responseId != "" {
+			lastResponseId = responseId
+		}
+
 		// Add assistant response to history
 		history = append(history, &message{role: "assistant", content: response})
 	}
@@ -275,13 +328,14 @@ type message struct {
 	content string
 }
 
-func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatRequest) (string, error) {
+func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatRequest) (string, string, error) {
 	stream, err := client.StreamChat(ctx, req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	var content strings.Builder
+	var responseId string
 	var toolCalls []*xai.ToolCallInfo
 	var citations []string
 	contentStarted := false
@@ -293,7 +347,12 @@ func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatReques
 			break
 		}
 		if err != nil {
-			return content.String(), err
+			return content.String(), responseId, err
+		}
+
+		// Capture response ID (usually in first chunk)
+		if chunk.ID != "" {
+			responseId = chunk.ID
 		}
 
 		// Announce tools as they arrive with status
@@ -340,13 +399,13 @@ func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatReques
 	displayToolCalls(toolCalls)
 	displayCitations(citations)
 
-	return content.String(), nil
+	return content.String(), responseId, nil
 }
 
-func blockingResponse(ctx context.Context, client *xai.Client, req *xai.ChatRequest) (string, error) {
+func blockingResponse(ctx context.Context, client *xai.Client, req *xai.ChatRequest) (string, string, error) {
 	resp, err := client.CompleteChat(ctx, req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	fmt.Print(resp.Content)
 
@@ -354,7 +413,7 @@ func blockingResponse(ctx context.Context, client *xai.Client, req *xai.ChatRequ
 	displayToolCalls(resp.ToolCalls)
 	displayCitations(resp.Citations)
 
-	return resp.Content, nil
+	return resp.Content, resp.ID, nil
 }
 
 func displayToolCalls(toolCalls []*xai.ToolCallInfo) {
@@ -417,11 +476,26 @@ Commands:
   /system <prompt>     Change the system prompt
   /tools, /t           Show enabled tools
   /tools <name>        Toggle tool (web, x, code, all, off)
+  /context, /ctx       Show context mode and storage settings
+  /context mode        Toggle between response_id (server) and history (client)
+  /context store       Toggle server-side message storage
   /image <prompt>      Generate an image (options: -wide, -tall, -2k)
   /image-model         Show current image model
   /image-model <name>  Change the image model
   /image-models, /im   List available image models
 `)
+}
+
+func contextModeString(useResponseId, storeMessages bool) string {
+	mode := "history (client)"
+	if useResponseId {
+		mode = "response_id (server)"
+	}
+	store := "off"
+	if storeMessages {
+		store = "on"
+	}
+	return fmt.Sprintf("%s, storage: %s", mode, store)
 }
 
 func printInfo(client *xai.Client, model, systemPrompt string, stream bool, historyLen int) {

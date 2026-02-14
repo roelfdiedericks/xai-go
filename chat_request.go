@@ -41,26 +41,28 @@ const (
 
 // ChatRequest builds a chat completion request.
 type ChatRequest struct {
-	messages          []*v1.Message
-	model             string
-	user              string
-	maxTokens         *int32
-	seed              *int32
-	stop              []string
-	temperature       *float32
-	topP              *float32
-	logprobs          bool
-	topLogprobs       *int32
-	tools             []Tool
-	toolChoice        *ToolChoice
-	responseFormat    *ResponseFormat
-	frequencyPenalty  *float32
-	presencePenalty   *float32
-	reasoningEffort   *ReasoningEffort
-	parallelToolCalls *bool
-	storeMessages     bool
-	maxTurns          *int32
-	includeOptions    []v1.IncludeOption
+	messages            []*v1.Message
+	model               string
+	user                string
+	maxTokens           *int32
+	seed                *int32
+	stop                []string
+	temperature         *float32
+	topP                *float32
+	logprobs            bool
+	topLogprobs         *int32
+	tools               []Tool
+	toolChoice          *ToolChoice
+	responseFormat      *ResponseFormat
+	frequencyPenalty    *float32
+	presencePenalty     *float32
+	reasoningEffort     *ReasoningEffort
+	parallelToolCalls   *bool
+	storeMessages       bool
+	maxTurns            *int32
+	includeOptions      []v1.IncludeOption
+	previousResponseID  string
+	useEncryptedContent bool
 }
 
 // NewChatRequest creates a new empty chat request builder.
@@ -234,9 +236,28 @@ func (r *ChatRequest) WithParallelToolCalls(enabled bool) *ChatRequest {
 	return r
 }
 
-// WithStoreMessages enables storing messages for later retrieval.
+// WithStoreMessages enables storing messages on xAI's servers for later retrieval.
+// When enabled, you can use the response ID with WithPreviousResponseId to continue
+// conversations without resending the full history. Messages are stored for 30 days.
 func (r *ChatRequest) WithStoreMessages(store bool) *ChatRequest {
 	r.storeMessages = store
+	return r
+}
+
+// WithPreviousResponseId continues a conversation from a previous response.
+// When set, only new messages need to be added - the server will chain them
+// with the stored conversation history. Requires that the previous request
+// was made with WithStoreMessages(true).
+func (r *ChatRequest) WithPreviousResponseId(id string) *ChatRequest {
+	r.previousResponseID = id
+	return r
+}
+
+// WithEncryptedContent enables encrypted thinking content for reasoning models.
+// This allows reasoning traces to be preserved and rehydrated across conversation
+// turns when using WithPreviousResponseId.
+func (r *ChatRequest) WithEncryptedContent(enabled bool) *ChatRequest {
+	r.useEncryptedContent = enabled
 	return r
 }
 
@@ -280,13 +301,19 @@ func (r *ChatRequest) IncludeVerboseStreaming() *ChatRequest {
 // If model is not set, it uses the provided default model.
 func (r *ChatRequest) Build(defaultModel string) *v1.GetCompletionsRequest {
 	req := &v1.GetCompletionsRequest{
-		Messages:      r.messages,
-		Model:         r.model,
-		User:          r.user,
-		Stop:          r.stop,
-		Logprobs:      r.logprobs,
-		StoreMessages: r.storeMessages,
-		Include:       r.includeOptions,
+		Messages:            r.messages,
+		Model:               r.model,
+		User:                r.user,
+		Stop:                r.stop,
+		Logprobs:            r.logprobs,
+		StoreMessages:       r.storeMessages,
+		Include:             r.includeOptions,
+		UseEncryptedContent: r.useEncryptedContent,
+	}
+
+	// Previous response ID for conversation continuation
+	if r.previousResponseID != "" {
+		req.PreviousResponseId = &r.previousResponseID
 	}
 
 	// Use default model if not specified

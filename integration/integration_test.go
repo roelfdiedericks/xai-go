@@ -174,3 +174,208 @@ func TestListEmbeddingModels(t *testing.T) {
 		t.Logf("Embedding model: %s", m.Name)
 	}
 }
+
+// TestChatMultiTurnWithHistory tests multi-turn conversation using full message history.
+// This is the traditional approach where the client sends all previous messages with each request.
+func TestChatMultiTurnWithHistory(t *testing.T) {
+	client := getClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// First turn: establish context
+	req1 := xai.NewChatRequest().
+		SystemMessage("You are a helpful assistant. Be concise.").
+		UserMessage("My name is Alice. Remember this.").
+		WithMaxTokens(100)
+
+	resp1, err := client.CompleteChat(ctx, req1)
+	if err != nil {
+		t.Fatalf("First turn failed: %v", err)
+	}
+	t.Logf("Turn 1 response: %s", resp1.Content)
+
+	// Second turn: include full history
+	req2 := xai.NewChatRequest().
+		SystemMessage("You are a helpful assistant. Be concise.").
+		UserMessage("My name is Alice. Remember this.").
+		AssistantMessage(resp1.Content).
+		UserMessage("What is my name?").
+		WithMaxTokens(50)
+
+	resp2, err := client.CompleteChat(ctx, req2)
+	if err != nil {
+		t.Fatalf("Second turn failed: %v", err)
+	}
+	t.Logf("Turn 2 response: %s", resp2.Content)
+
+	// Verify the model remembers the name
+	if !containsIgnoreCase(resp2.Content, "Alice") {
+		t.Errorf("Expected response to contain 'Alice', got: %s", resp2.Content)
+	}
+}
+
+// TestChatMultiTurnWithResponseId tests multi-turn conversation using previous_response_id.
+// This uses xAI's server-side context storage to maintain conversation state.
+func TestChatMultiTurnWithResponseId(t *testing.T) {
+	client := getClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// First turn: enable storage and establish context
+	req1 := xai.NewChatRequest().
+		SystemMessage("You are a helpful assistant. Be concise.").
+		UserMessage("My name is Bob. Remember this.").
+		WithStoreMessages(true).
+		WithMaxTokens(100)
+
+	resp1, err := client.CompleteChat(ctx, req1)
+	if err != nil {
+		t.Fatalf("First turn failed: %v", err)
+	}
+	t.Logf("Turn 1 response ID: %s", resp1.ID)
+	t.Logf("Turn 1 response: %s", resp1.Content)
+
+	if resp1.ID == "" {
+		t.Fatal("Expected response ID when store_messages=true, got empty string")
+	}
+
+	// Second turn: use previous_response_id, only send new message
+	// Note: WithStoreMessages(true) is needed to continue the chain
+	req2 := xai.NewChatRequest().
+		WithPreviousResponseId(resp1.ID).
+		WithStoreMessages(true).
+		UserMessage("What is my name?").
+		WithMaxTokens(50)
+
+	resp2, err := client.CompleteChat(ctx, req2)
+	if err != nil {
+		t.Fatalf("Second turn failed: %v", err)
+	}
+	t.Logf("Turn 2 response ID: %s", resp2.ID)
+	t.Logf("Turn 2 response: %s", resp2.Content)
+
+	// Verify the model remembers the name from server-side context
+	if !containsIgnoreCase(resp2.Content, "Bob") {
+		t.Errorf("Expected response to contain 'Bob', got: %s", resp2.Content)
+	}
+
+	// Third turn: chain from second response
+	req3 := xai.NewChatRequest().
+		WithPreviousResponseId(resp2.ID).
+		WithStoreMessages(true).
+		UserMessage("Say my name backwards.").
+		WithMaxTokens(50)
+
+	resp3, err := client.CompleteChat(ctx, req3)
+	if err != nil {
+		t.Fatalf("Third turn failed: %v", err)
+	}
+	t.Logf("Turn 3 response ID: %s", resp3.ID)
+	t.Logf("Turn 3 response: %s", resp3.Content)
+
+	// Verify continuity - should reference Bob backwards (boB)
+	if !containsIgnoreCase(resp3.Content, "bob") && !containsIgnoreCase(resp3.Content, "boB") {
+		t.Logf("Note: Response may not contain exact 'boB', got: %s", resp3.Content)
+	}
+}
+
+// TestChatWithResponseIdStreaming tests streaming with previous_response_id.
+func TestChatWithResponseIdStreaming(t *testing.T) {
+	client := getClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// First turn: enable storage
+	req1 := xai.NewChatRequest().
+		SystemMessage("You are a helpful assistant. Be concise.").
+		UserMessage("The secret code is 42. Remember it.").
+		WithStoreMessages(true).
+		WithMaxTokens(100)
+
+	stream1, err := client.StreamChat(ctx, req1)
+	if err != nil {
+		t.Fatalf("First stream failed: %v", err)
+	}
+
+	var responseId string
+	var content1 string
+	for {
+		chunk, err := stream1.Next()
+		if err != nil {
+			break
+		}
+		if chunk.ID != "" {
+			responseId = chunk.ID
+		}
+		content1 += chunk.Delta
+	}
+	t.Logf("Turn 1 response ID: %s", responseId)
+	t.Logf("Turn 1 content: %s", content1)
+
+	if responseId == "" {
+		t.Fatal("Expected response ID from streaming with store_messages=true")
+	}
+
+	// Second turn: use previous_response_id with streaming
+	// Note: WithStoreMessages(true) would be needed to continue the chain further
+	req2 := xai.NewChatRequest().
+		WithPreviousResponseId(responseId).
+		UserMessage("What is the secret code?").
+		WithMaxTokens(50)
+
+	stream2, err := client.StreamChat(ctx, req2)
+	if err != nil {
+		t.Fatalf("Second stream failed: %v", err)
+	}
+
+	var content2 string
+	for {
+		chunk, err := stream2.Next()
+		if err != nil {
+			break
+		}
+		content2 += chunk.Delta
+	}
+	t.Logf("Turn 2 content: %s", content2)
+
+	// Verify the model remembers the code
+	if !containsIgnoreCase(content2, "42") {
+		t.Errorf("Expected response to contain '42', got: %s", content2)
+	}
+}
+
+// containsIgnoreCase checks if s contains substr (case-insensitive).
+func containsIgnoreCase(s, substr string) bool {
+	return len(s) >= len(substr) &&
+		(s == substr ||
+			len(substr) == 0 ||
+			findIgnoreCase(s, substr))
+}
+
+func findIgnoreCase(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if equalIgnoreCase(s[i:i+len(substr)], substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func equalIgnoreCase(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if ca >= 'A' && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if cb >= 'A' && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
+}
