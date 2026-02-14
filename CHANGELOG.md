@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Tool call history reconstruction** - `AssistantContent.ToolCalls` for representing assistant tool calls in conversation history
 - **`HistoryToolCall` struct** - Represents tool calls with ID, Name, and Arguments
-- **Integration test** - `TestChatWithToolCallHistory` validates tool call history reconstruction
+- **Integration tests** - `TestChatWithToolCallHistory` validates tool call history reconstruction
+- **Context window behavior test** - `TestContextWindowBehavior` documents that xAI does NOT return context errors (skipped by default)
 
 ### Changed
 
@@ -22,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `DeveloperMessage(DeveloperContent{Text: "..."})` instead of `DeveloperMessage("...")`
   - `ToolResult(ToolContent{CallID: "...", Result: "..."})` instead of `ToolResult("...", "...")`
 - Removed `UserWithImage()` - use `UserMessage(UserContent{Text: "...", ImageURL: "..."})` instead
+
+### Fixed
+
+- Integration tests now always run fresh (`-count=1`) instead of returning cached results
 
 ## [0.3.0] - 2026-02-14
 

@@ -3,7 +3,9 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -407,6 +409,57 @@ func TestChatWithToolCallHistory(t *testing.T) {
 	if !containsIgnoreCase(resp2.Content, "5") {
 		t.Errorf("Expected response to reference '5', got: %s", resp2.Content)
 	}
+}
+
+// TestContextWindowBehavior documents how xAI handles oversized requests.
+// FINDING: xAI does NOT return context window errors - they silently truncate using a sliding window.
+// This test verifies this behavior and shows how to detect truncation via token counts.
+// Run explicitly with: go test -v -run TestContextWindowBehavior ./integration/...
+func TestContextWindowBehavior(t *testing.T) {
+	t.Skip("Documentation test - run manually with: go test -v -run TestContextWindowBehavior ./integration/...")
+
+	client := getClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// Create a large message (~150k tokens, exceeds 128k context of grok-4-1-fast)
+	largeText := strings.Repeat("word ", 150000) // ~150k tokens
+
+	req := xai.NewChatRequest().
+		WithModel("grok-4-1-fast"). // 128k context window
+		SystemMessage(xai.SystemContent{Text: "Count approximately how many times the word 'word' appears."}).
+		UserMessage(xai.UserContent{Text: largeText}).
+		WithMaxTokens(100)
+
+	resp, err := client.CompleteChat(ctx, req)
+
+	// DOCUMENTED FINDING: xAI does NOT return errors for oversized context
+	// Instead, they silently truncate using a sliding window approach
+	if err != nil {
+		var xaiErr *xai.Error
+		if errors.As(err, &xaiErr) {
+			t.Logf("Got error (unexpected): Code=%s, Message=%s", xaiErr.Code.String(), xaiErr.Message)
+		}
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	t.Logf("=== xAI CONTEXT WINDOW BEHAVIOR ===")
+	t.Logf("Request succeeded (no error returned)")
+	t.Logf("Prompt tokens used: %d", resp.Usage.PromptTokens)
+	t.Logf("Expected tokens: ~150,000")
+	t.Logf("Response: %s", resp.Content)
+
+	// Check if truncation occurred by comparing token counts
+	if resp.Usage.PromptTokens < 140000 {
+		t.Logf("TRUNCATION DETECTED: Only %d prompt tokens used (expected ~150k)", resp.Usage.PromptTokens)
+		t.Logf("xAI silently truncated the request to fit context window")
+	}
+
+	// Document the finding
+	t.Logf("\n=== FINDING FOR GOCLAW ===")
+	t.Logf("xAI does NOT return context window exceeded errors")
+	t.Logf("Detection method: Compare resp.Usage.PromptTokens against expected")
+	t.Logf("Or pre-flight check: Use client.Tokenize() before sending")
 }
 
 // containsIgnoreCase checks if s contains substr (case-insensitive).

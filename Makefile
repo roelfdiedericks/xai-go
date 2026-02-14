@@ -30,8 +30,9 @@ test: $(GEN_SENTINEL)
 	go test -v ./tests/...
 
 # Live tests (require XAI_APIKEY; skip via t.Skip when unset)
+# -count=1 disables caching to ensure live API calls
 test-integration: $(GEN_SENTINEL)
-	go test -v ./integration/...
+	go test -count=1 -v ./integration/...
 
 # Interactive chat REPL for manual testing
 test-interactive: $(GEN_SENTINEL)
