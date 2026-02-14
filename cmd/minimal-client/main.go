@@ -485,7 +485,6 @@ func listImageModels(client *xai.Client) error {
 	return nil
 }
 
-
 func generateImage(client *xai.Client, defaultModel, input string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
