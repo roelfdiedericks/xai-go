@@ -43,16 +43,48 @@ func run() error {
 	return runInteractive(client, *model, *system, *stream)
 }
 
+// toolSettings tracks which tools are enabled
+type toolSettings struct {
+	webSearch     bool
+	xSearch       bool
+	codeExecution bool
+}
+
+func (t *toolSettings) String() string {
+	var enabled []string
+	if t.webSearch {
+		enabled = append(enabled, "web")
+	}
+	if t.xSearch {
+		enabled = append(enabled, "x")
+	}
+	if t.codeExecution {
+		enabled = append(enabled, "code")
+	}
+	if len(enabled) == 0 {
+		return "none"
+	}
+	return strings.Join(enabled, ", ")
+}
+
 func runInteractive(client *xai.Client, model, systemPrompt string, stream bool) error {
 	if model == "" {
 		model = client.DefaultModel()
 	}
 	imageModel := client.DefaultImageModel()
 
+	// Enable server-side tools by default
+	tools := &toolSettings{
+		webSearch:     true,
+		xSearch:       true,
+		codeExecution: true,
+	}
+
 	fmt.Println("=== xAI Interactive Chat ===")
 	fmt.Printf("Model: %s\n", model)
 	fmt.Printf("Streaming: %v\n", stream)
-	fmt.Println("Commands: /help, /model, /system, /stream, /image, /image-model, /quit")
+	fmt.Printf("Tools: %s\n", tools)
+	fmt.Println("Commands: /help, /model, /system, /stream, /tools, /image, /quit")
 	fmt.Println("---")
 
 	reader := bufio.NewReader(os.Stdin)
@@ -145,6 +177,38 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 				}
 				continue
 
+			case input == "/tools" || input == "/t":
+				fmt.Printf("Tools enabled: %s\n", tools)
+				fmt.Println("Usage: /tools web|x|code|all|off")
+				continue
+
+			case strings.HasPrefix(input, "/tools "):
+				arg := strings.TrimPrefix(input, "/tools ")
+				switch arg {
+				case "web":
+					tools.webSearch = !tools.webSearch
+					fmt.Printf("Web search: %v\n", tools.webSearch)
+				case "x":
+					tools.xSearch = !tools.xSearch
+					fmt.Printf("X search: %v\n", tools.xSearch)
+				case "code":
+					tools.codeExecution = !tools.codeExecution
+					fmt.Printf("Code execution: %v\n", tools.codeExecution)
+				case "all":
+					tools.webSearch = true
+					tools.xSearch = true
+					tools.codeExecution = true
+					fmt.Println("All tools enabled")
+				case "off", "none":
+					tools.webSearch = false
+					tools.xSearch = false
+					tools.codeExecution = false
+					fmt.Println("All tools disabled")
+				default:
+					fmt.Println("Unknown tool. Options: web, x, code, all, off")
+				}
+				continue
+
 			default:
 				fmt.Println("Unknown command. Type /help for available commands.")
 				continue
@@ -167,6 +231,17 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 			case "assistant":
 				req.AssistantMessage(msg.content)
 			}
+		}
+
+		// Add enabled tools
+		if tools.webSearch {
+			req.AddTool(xai.NewWebSearchTool())
+		}
+		if tools.xSearch {
+			req.AddTool(xai.NewXSearchTool())
+		}
+		if tools.codeExecution {
+			req.AddTool(xai.NewCodeExecutionTool())
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -207,6 +282,11 @@ func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatReques
 	}
 
 	var content strings.Builder
+	var toolCalls []*xai.ToolCallInfo
+	var citations []string
+	contentStarted := false
+	hadTools := false
+
 	for {
 		chunk, err := stream.Next()
 		if err == io.EOF {
@@ -215,9 +295,50 @@ func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatReques
 		if err != nil {
 			return content.String(), err
 		}
+
+		// Announce tools as they arrive with status
+		for _, tc := range chunk.ToolCalls {
+			hadTools = true
+			status := "pending"
+			switch tc.Status {
+			case xai.ToolCallStatusCompleted:
+				status = "completed"
+			case xai.ToolCallStatusFailed:
+				status = "failed"
+			}
+
+			if tc.Function != nil {
+				args := tc.Function.Arguments
+				if len(args) > 80 {
+					args = args[:77] + "..."
+				}
+				fmt.Printf("  Tool: %s [%s] %s\n", tc.Function.Name, status, args)
+			} else if tc.ID != "" {
+				fmt.Printf("  Tool: %s [%s]\n", tc.ID, status)
+			}
+		}
+
+		// Print newline before first content if we had tool calls
+		if chunk.Delta != "" && !contentStarted {
+			if hadTools {
+				fmt.Println()
+			}
+			contentStarted = true
+		}
+
 		fmt.Print(chunk.Delta)
 		content.WriteString(chunk.Delta)
+
+		// Collect tool calls and citations from chunks
+		toolCalls = append(toolCalls, chunk.ToolCalls...)
+		if len(chunk.Citations) > 0 {
+			citations = chunk.Citations
+		}
 	}
+
+	// Display tool calls if any
+	displayToolCalls(toolCalls)
+	displayCitations(citations)
 
 	return content.String(), nil
 }
@@ -228,7 +349,59 @@ func blockingResponse(ctx context.Context, client *xai.Client, req *xai.ChatRequ
 		return "", err
 	}
 	fmt.Print(resp.Content)
+
+	// Display tool calls if any
+	displayToolCalls(resp.ToolCalls)
+	displayCitations(resp.Citations)
+
 	return resp.Content, nil
+}
+
+func displayToolCalls(toolCalls []*xai.ToolCallInfo) {
+	if len(toolCalls) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println("\n[Tool Calls]")
+	for _, tc := range toolCalls {
+		typeStr := "client"
+		if tc.IsServerSide() {
+			typeStr = "server"
+		}
+
+		statusStr := "pending"
+		switch tc.Status {
+		case xai.ToolCallStatusCompleted:
+			statusStr = "completed"
+		case xai.ToolCallStatusFailed:
+			statusStr = "failed"
+		}
+
+		if tc.Function != nil {
+			fmt.Printf("  - %s (%s, %s)\n", tc.Function.Name, typeStr, statusStr)
+			if tc.Function.Arguments != "" && tc.Function.Arguments != "{}" {
+				fmt.Printf("    Args: %s\n", tc.Function.Arguments)
+			}
+		} else {
+			fmt.Printf("  - [%s] (%s, %s)\n", tc.ID, typeStr, statusStr)
+		}
+
+		if tc.ErrorMessage != "" {
+			fmt.Printf("    Error: %s\n", tc.ErrorMessage)
+		}
+	}
+}
+
+func displayCitations(citations []string) {
+	if len(citations) == 0 {
+		return
+	}
+
+	fmt.Println("\n[Citations]")
+	for i, c := range citations {
+		fmt.Printf("  %d. %s\n", i+1, c)
+	}
 }
 
 func printHelp() {
@@ -242,6 +415,8 @@ Commands:
   /model, /m           List available chat models
   /model <name>        Change the chat model
   /system <prompt>     Change the system prompt
+  /tools, /t           Show enabled tools
+  /tools <name>        Toggle tool (web, x, code, all, off)
   /image <prompt>      Generate an image (options: -wide, -tall, -2k)
   /image-model         Show current image model
   /image-model <name>  Change the image model

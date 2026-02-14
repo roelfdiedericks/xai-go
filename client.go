@@ -24,6 +24,10 @@ const (
 	DefaultImageModel = "grok-2-image"
 	// EnvAPIKey is the environment variable for the API key.
 	EnvAPIKey = "XAI_APIKEY"
+	// DefaultKeepaliveTime is how often to send keepalive pings.
+	DefaultKeepaliveTime = 30 * time.Second
+	// DefaultKeepaliveTimeout is how long to wait for a keepalive response.
+	DefaultKeepaliveTimeout = 10 * time.Second
 )
 
 // Config holds the configuration for an xAI client.
@@ -34,10 +38,18 @@ type Config struct {
 	APIKey *SecureString
 	// Timeout is the default request timeout (default: 120s).
 	Timeout time.Duration
-	// DefaultModel is the model to use when not specified (default: grok-2-1212).
+	// DefaultModel is the model to use when not specified.
 	DefaultModel string
 	// TLSConfig allows custom TLS configuration. If nil, uses default TLS.
 	TLSConfig *tls.Config
+	// KeepaliveTime is how often to send keepalive pings (default: 30s).
+	// Set to 0 to use the default, or -1 to disable keepalive.
+	KeepaliveTime time.Duration
+	// KeepaliveTimeout is how long to wait for a keepalive response (default: 10s).
+	KeepaliveTimeout time.Duration
+	// KeepalivePermitWithoutStream allows pings when no active streams (default: true).
+	// Set to false to only ping during active requests.
+	KeepalivePermitWithoutStream *bool
 }
 
 // validate checks the config and sets defaults.
@@ -56,6 +68,12 @@ func (c *Config) validate() error {
 	}
 	if c.DefaultModel == "" {
 		c.DefaultModel = DefaultModel
+	}
+	if c.KeepaliveTime == 0 {
+		c.KeepaliveTime = DefaultKeepaliveTime
+	}
+	if c.KeepaliveTimeout == 0 {
+		c.KeepaliveTimeout = DefaultKeepaliveTimeout
 	}
 	return nil
 }
@@ -86,11 +104,19 @@ func New(cfg Config) (*Client, error) {
 	// Build gRPC dial options
 	opts := []grpc.DialOption{
 		grpc.WithPerRPCCredentials(&bearerAuth{apiKey: cfg.APIKey}),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second,
-			Timeout:             10 * time.Second,
-			PermitWithoutStream: true,
-		}),
+	}
+
+	// Add keepalive if not disabled (KeepaliveTime == -1 disables)
+	if cfg.KeepaliveTime >= 0 {
+		permitWithoutStream := true
+		if cfg.KeepalivePermitWithoutStream != nil {
+			permitWithoutStream = *cfg.KeepalivePermitWithoutStream
+		}
+		opts = append(opts, grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                cfg.KeepaliveTime,
+			Timeout:             cfg.KeepaliveTimeout,
+			PermitWithoutStream: permitWithoutStream,
+		}))
 	}
 
 	// Configure TLS
