@@ -27,6 +27,10 @@ go.work.sum
 # env file
 .env
 
+# Generated protobuf code (committed for go get compatibility)
+# proto/
+
 # Editor/IDE
+.cursor/
 # .idea/
 # .vscode/
