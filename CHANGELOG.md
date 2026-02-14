@@ -1,0 +1,27 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-02-14
+
+### Added
+
+- Initial release
+- **Chat completions** - Blocking and streaming responses via gRPC
+- **Tool support** - Function calling, web search, X search, code execution, collections search, attachment search, MCP
+- **Image generation** - Generate images with configurable aspect ratio, resolution, and format
+- **Embeddings** - Text and image embeddings
+- **Tokenization** - Token counting and inspection
+- **Model management** - List and query language, embedding, and image models
+- **Document search** - Search within document collections
+- **Deferred completions** - Async request processing with polling
+- **Stored completions** - Retrieve and delete stored completions
+- **API key info** - Query API key status and permissions
+- **Secure API key handling** - Memory-zeroing SecureString wrapper
+- **Structured errors** - Error types with codes, retryability, and gRPC status mapping
+- **Interactive test client** - REPL for manual testing with chat and image generation
+
+[0.1.0]: https://github.com/roelfdiedericks/xai-go/releases/tag/v0.1.0
