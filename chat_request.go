@@ -39,6 +39,42 @@ const (
 	ResponseFormatJSON
 )
 
+// SystemContent represents the content of a system message.
+type SystemContent struct {
+	Text string
+}
+
+// UserContent represents the content of a user message.
+type UserContent struct {
+	Text     string
+	ImageURL string // optional - for vision models
+}
+
+// AssistantContent represents the content of an assistant message.
+// Used for reconstructing conversation history with tool calls.
+type AssistantContent struct {
+	Text      string
+	ToolCalls []HistoryToolCall // optional - for history with tool calls
+}
+
+// HistoryToolCall represents a tool call made by the assistant in conversation history.
+type HistoryToolCall struct {
+	ID        string // unique identifier for this tool call
+	Name      string // function/tool name
+	Arguments string // JSON-encoded arguments
+}
+
+// DeveloperContent represents the content of a developer message.
+type DeveloperContent struct {
+	Text string
+}
+
+// ToolContent represents the content of a tool result message.
+type ToolContent struct {
+	CallID string // the tool call ID this result responds to
+	Result string // the result of the tool execution
+}
+
 // ChatRequest builds a chat completion request.
 type ChatRequest struct {
 	messages            []*v1.Message
@@ -71,68 +107,79 @@ func NewChatRequest() *ChatRequest {
 }
 
 // SystemMessage adds a system message to the conversation.
-func (r *ChatRequest) SystemMessage(text string) *ChatRequest {
+func (r *ChatRequest) SystemMessage(content SystemContent) *ChatRequest {
 	r.messages = append(r.messages, &v1.Message{
 		Role: v1.MessageRole_ROLE_SYSTEM,
 		Content: []*v1.Content{
-			{Content: &v1.Content_Text{Text: text}},
+			{Content: &v1.Content_Text{Text: content.Text}},
 		},
 	})
 	return r
 }
 
 // UserMessage adds a user message to the conversation.
-func (r *ChatRequest) UserMessage(text string) *ChatRequest {
-	r.messages = append(r.messages, &v1.Message{
+// If ImageURL is set, the message will include the image for vision models.
+func (r *ChatRequest) UserMessage(content UserContent) *ChatRequest {
+	msg := &v1.Message{
 		Role: v1.MessageRole_ROLE_USER,
 		Content: []*v1.Content{
-			{Content: &v1.Content_Text{Text: text}},
+			{Content: &v1.Content_Text{Text: content.Text}},
 		},
-	})
-	return r
-}
-
-// UserWithImage adds a user message with text and an image URL.
-func (r *ChatRequest) UserWithImage(text, imageURL string) *ChatRequest {
-	r.messages = append(r.messages, &v1.Message{
-		Role: v1.MessageRole_ROLE_USER,
-		Content: []*v1.Content{
-			{Content: &v1.Content_Text{Text: text}},
-			{Content: &v1.Content_ImageUrl{ImageUrl: &v1.ImageUrlContent{ImageUrl: imageURL}}},
-		},
-	})
+	}
+	if content.ImageURL != "" {
+		msg.Content = append(msg.Content, &v1.Content{
+			Content: &v1.Content_ImageUrl{ImageUrl: &v1.ImageUrlContent{ImageUrl: content.ImageURL}},
+		})
+	}
+	r.messages = append(r.messages, msg)
 	return r
 }
 
 // AssistantMessage adds an assistant message to the conversation.
-func (r *ChatRequest) AssistantMessage(text string) *ChatRequest {
-	r.messages = append(r.messages, &v1.Message{
+// If ToolCalls is set, the message will include tool calls for history reconstruction.
+func (r *ChatRequest) AssistantMessage(content AssistantContent) *ChatRequest {
+	msg := &v1.Message{
 		Role: v1.MessageRole_ROLE_ASSISTANT,
-		Content: []*v1.Content{
-			{Content: &v1.Content_Text{Text: text}},
-		},
-	})
+	}
+	if content.Text != "" {
+		msg.Content = append(msg.Content, &v1.Content{
+			Content: &v1.Content_Text{Text: content.Text},
+		})
+	}
+	for _, tc := range content.ToolCalls {
+		msg.ToolCalls = append(msg.ToolCalls, &v1.ToolCall{
+			Id:   tc.ID,
+			Type: v1.ToolCallType_TOOL_CALL_TYPE_CLIENT_SIDE_TOOL,
+			Tool: &v1.ToolCall_Function{
+				Function: &v1.FunctionCall{
+					Name:      tc.Name,
+					Arguments: tc.Arguments,
+				},
+			},
+		})
+	}
+	r.messages = append(r.messages, msg)
 	return r
 }
 
 // ToolResult adds a tool result message to the conversation.
-func (r *ChatRequest) ToolResult(toolCallID, result string) *ChatRequest {
+func (r *ChatRequest) ToolResult(content ToolContent) *ChatRequest {
 	r.messages = append(r.messages, &v1.Message{
 		Role:       v1.MessageRole_ROLE_TOOL,
-		ToolCallId: &toolCallID,
+		ToolCallId: &content.CallID,
 		Content: []*v1.Content{
-			{Content: &v1.Content_Text{Text: result}},
+			{Content: &v1.Content_Text{Text: content.Result}},
 		},
 	})
 	return r
 }
 
 // DeveloperMessage adds a developer instruction message.
-func (r *ChatRequest) DeveloperMessage(text string) *ChatRequest {
+func (r *ChatRequest) DeveloperMessage(content DeveloperContent) *ChatRequest {
 	r.messages = append(r.messages, &v1.Message{
 		Role: v1.MessageRole_ROLE_DEVELOPER,
 		Content: []*v1.Content{
-			{Content: &v1.Content_Text{Text: text}},
+			{Content: &v1.Content_Text{Text: content.Text}},
 		},
 	})
 	return r

@@ -33,8 +33,8 @@ func main() {
 
     // Simple chat completion
     req := xai.NewChatRequest().
-        SystemMessage("You are a helpful assistant.").
-        UserMessage("What is the capital of France?")
+        SystemMessage(xai.SystemContent{Text: "You are a helpful assistant."}).
+        UserMessage(xai.UserContent{Text: "What is the capital of France?"})
 
     resp, err := client.CompleteChat(ctx, req)
     if err != nil {
@@ -77,8 +77,8 @@ client, err := xai.New(xai.Config{
 
 ```go
 req := xai.NewChatRequest().
-    SystemMessage("You are a helpful assistant.").
-    UserMessage("Hello!").
+    SystemMessage(xai.SystemContent{Text: "You are a helpful assistant."}).
+    UserMessage(xai.UserContent{Text: "Hello!"}).
     WithMaxTokens(100).
     WithTemperature(0.7)
 
@@ -113,8 +113,8 @@ Instead of sending the full conversation history with each request, you can use 
 ```go
 // First turn: enable storage
 req1 := xai.NewChatRequest().
-    SystemMessage("You are a helpful assistant.").
-    UserMessage("My name is Alice.").
+    SystemMessage(xai.SystemContent{Text: "You are a helpful assistant."}).
+    UserMessage(xai.UserContent{Text: "My name is Alice."}).
     WithStoreMessages(true)  // Enable server-side storage
 
 resp1, err := client.CompleteChat(ctx, req1)
@@ -124,7 +124,7 @@ resp1, err := client.CompleteChat(ctx, req1)
 req2 := xai.NewChatRequest().
     WithPreviousResponseId(resp1.ID).  // Chain from previous
     WithStoreMessages(true).            // Keep storing for further turns
-    UserMessage("What is my name?")
+    UserMessage(xai.UserContent{Text: "What is my name?"})
 
 resp2, err := client.CompleteChat(ctx, req2)
 // The model remembers "Alice" from server-side context
@@ -151,7 +151,7 @@ addTool := xai.NewFunctionTool("add", "Add two numbers").
     }`)
 
 req := xai.NewChatRequest().
-    UserMessage("What is 2 + 3?").
+    UserMessage(xai.UserContent{Text: "What is 2 + 3?"}).
     AddTool(addTool).
     WithToolChoice(xai.ToolChoiceAuto)
 

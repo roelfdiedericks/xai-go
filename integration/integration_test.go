@@ -72,8 +72,8 @@ func TestCompleteChat(t *testing.T) {
 	defer cancel()
 
 	req := xai.NewChatRequest().
-		SystemMessage("You are a helpful assistant.").
-		UserMessage("Say 'hello' and nothing else.").
+		SystemMessage(xai.SystemContent{Text: "You are a helpful assistant."}).
+		UserMessage(xai.UserContent{Text: "Say 'hello' and nothing else."}).
 		WithMaxTokens(50)
 
 	resp, err := client.CompleteChat(ctx, req)
@@ -101,8 +101,8 @@ func TestStreamChat(t *testing.T) {
 	defer cancel()
 
 	req := xai.NewChatRequest().
-		SystemMessage("You are a helpful assistant.").
-		UserMessage("Count from 1 to 5.").
+		SystemMessage(xai.SystemContent{Text: "You are a helpful assistant."}).
+		UserMessage(xai.UserContent{Text: "Count from 1 to 5."}).
 		WithMaxTokens(100)
 
 	stream, err := client.StreamChat(ctx, req)
@@ -184,8 +184,8 @@ func TestChatMultiTurnWithHistory(t *testing.T) {
 
 	// First turn: establish context
 	req1 := xai.NewChatRequest().
-		SystemMessage("You are a helpful assistant. Be concise.").
-		UserMessage("My name is Alice. Remember this.").
+		SystemMessage(xai.SystemContent{Text: "You are a helpful assistant. Be concise."}).
+		UserMessage(xai.UserContent{Text: "My name is Alice. Remember this."}).
 		WithMaxTokens(100)
 
 	resp1, err := client.CompleteChat(ctx, req1)
@@ -196,10 +196,10 @@ func TestChatMultiTurnWithHistory(t *testing.T) {
 
 	// Second turn: include full history
 	req2 := xai.NewChatRequest().
-		SystemMessage("You are a helpful assistant. Be concise.").
-		UserMessage("My name is Alice. Remember this.").
-		AssistantMessage(resp1.Content).
-		UserMessage("What is my name?").
+		SystemMessage(xai.SystemContent{Text: "You are a helpful assistant. Be concise."}).
+		UserMessage(xai.UserContent{Text: "My name is Alice. Remember this."}).
+		AssistantMessage(xai.AssistantContent{Text: resp1.Content}).
+		UserMessage(xai.UserContent{Text: "What is my name?"}).
 		WithMaxTokens(50)
 
 	resp2, err := client.CompleteChat(ctx, req2)
@@ -223,8 +223,8 @@ func TestChatMultiTurnWithResponseId(t *testing.T) {
 
 	// First turn: enable storage and establish context
 	req1 := xai.NewChatRequest().
-		SystemMessage("You are a helpful assistant. Be concise.").
-		UserMessage("My name is Bob. Remember this.").
+		SystemMessage(xai.SystemContent{Text: "You are a helpful assistant. Be concise."}).
+		UserMessage(xai.UserContent{Text: "My name is Bob. Remember this."}).
 		WithStoreMessages(true).
 		WithMaxTokens(100)
 
@@ -244,7 +244,7 @@ func TestChatMultiTurnWithResponseId(t *testing.T) {
 	req2 := xai.NewChatRequest().
 		WithPreviousResponseId(resp1.ID).
 		WithStoreMessages(true).
-		UserMessage("What is my name?").
+		UserMessage(xai.UserContent{Text: "What is my name?"}).
 		WithMaxTokens(50)
 
 	resp2, err := client.CompleteChat(ctx, req2)
@@ -263,7 +263,7 @@ func TestChatMultiTurnWithResponseId(t *testing.T) {
 	req3 := xai.NewChatRequest().
 		WithPreviousResponseId(resp2.ID).
 		WithStoreMessages(true).
-		UserMessage("Say my name backwards.").
+		UserMessage(xai.UserContent{Text: "Say my name backwards."}).
 		WithMaxTokens(50)
 
 	resp3, err := client.CompleteChat(ctx, req3)
@@ -287,8 +287,8 @@ func TestChatWithResponseIdStreaming(t *testing.T) {
 
 	// First turn: enable storage
 	req1 := xai.NewChatRequest().
-		SystemMessage("You are a helpful assistant. Be concise.").
-		UserMessage("The secret code is 42. Remember it.").
+		SystemMessage(xai.SystemContent{Text: "You are a helpful assistant. Be concise."}).
+		UserMessage(xai.UserContent{Text: "The secret code is 42. Remember it."}).
 		WithStoreMessages(true).
 		WithMaxTokens(100)
 
@@ -320,7 +320,7 @@ func TestChatWithResponseIdStreaming(t *testing.T) {
 	// Note: WithStoreMessages(true) would be needed to continue the chain further
 	req2 := xai.NewChatRequest().
 		WithPreviousResponseId(responseId).
-		UserMessage("What is the secret code?").
+		UserMessage(xai.UserContent{Text: "What is the secret code?"}).
 		WithMaxTokens(50)
 
 	stream2, err := client.StreamChat(ctx, req2)
@@ -341,6 +341,71 @@ func TestChatWithResponseIdStreaming(t *testing.T) {
 	// Verify the model remembers the code
 	if !containsIgnoreCase(content2, "42") {
 		t.Errorf("Expected response to contain '42', got: %s", content2)
+	}
+}
+
+// TestChatWithToolCallHistory tests reconstructing conversation history that includes
+// assistant tool calls and tool results. This validates the AssistantContent.ToolCalls
+// and ToolContent types work correctly for history reconstruction.
+func TestChatWithToolCallHistory(t *testing.T) {
+	client := getClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// Define a simple calculator tool
+	addTool := xai.NewFunctionTool("add_numbers", "Add two numbers together").
+		WithParameters(`{"type":"object","properties":{"a":{"type":"number","description":"First number"},"b":{"type":"number","description":"Second number"}},"required":["a","b"]}`)
+
+	// First turn: ask model to use the tool
+	req1 := xai.NewChatRequest().
+		SystemMessage(xai.SystemContent{Text: "You are a calculator assistant. Always use the add_numbers tool when asked to add."}).
+		UserMessage(xai.UserContent{Text: "What is 2 + 3?"}).
+		AddTool(addTool).
+		WithToolChoice(xai.ToolChoiceRequired).
+		WithMaxTokens(100)
+
+	resp1, err := client.CompleteChat(ctx, req1)
+	if err != nil {
+		t.Fatalf("First turn failed: %v", err)
+	}
+
+	if !resp1.HasToolCalls() {
+		t.Fatalf("Expected tool call in response, got none. Content: %s", resp1.Content)
+	}
+
+	tc := resp1.ToolCalls[0]
+	if tc.Function == nil {
+		t.Fatal("Tool call has no function")
+	}
+	t.Logf("Tool call ID: %s", tc.ID)
+	t.Logf("Tool call: %s(%s)", tc.Function.Name, tc.Function.Arguments)
+
+	// Second turn: reconstruct history with tool call + result, then ask follow-up
+	req2 := xai.NewChatRequest().
+		SystemMessage(xai.SystemContent{Text: "You are a calculator assistant. Always use the add_numbers tool when asked to add."}).
+		UserMessage(xai.UserContent{Text: "What is 2 + 3?"}).
+		AssistantMessage(xai.AssistantContent{
+			Text: resp1.Content, // may be empty when tool is called
+			ToolCalls: []xai.HistoryToolCall{{
+				ID:        tc.ID,
+				Name:      tc.Function.Name,
+				Arguments: tc.Function.Arguments,
+			}},
+		}).
+		ToolResult(xai.ToolContent{CallID: tc.ID, Result: "5"}).
+		UserMessage(xai.UserContent{Text: "Great, what was that result again?"}).
+		AddTool(addTool).
+		WithMaxTokens(100)
+
+	resp2, err := client.CompleteChat(ctx, req2)
+	if err != nil {
+		t.Fatalf("Second turn failed: %v", err)
+	}
+	t.Logf("Response: %s", resp2.Content)
+
+	// Model should reference the result "5"
+	if !containsIgnoreCase(resp2.Content, "5") {
+		t.Errorf("Expected response to reference '5', got: %s", resp2.Content)
 	}
 }
 

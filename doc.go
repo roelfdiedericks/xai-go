@@ -12,8 +12,8 @@
 //	defer client.Close()
 //
 //	req := xai.NewChatRequest().
-//	    SystemMessage("You are a helpful assistant.").
-//	    UserMessage("Hello!")
+//	    SystemMessage(xai.SystemContent{Text: "You are a helpful assistant."}).
+//	    UserMessage(xai.UserContent{Text: "Hello!"})
 //
 //	resp, err := client.CompleteChat(context.Background(), req)
 //	if err != nil {
@@ -35,8 +35,8 @@
 // Use [NewChatRequest] to build chat requests with a fluent API:
 //
 //	req := xai.NewChatRequest().
-//	    SystemMessage("You are a helpful assistant.").
-//	    UserMessage("What is the capital of France?").
+//	    SystemMessage(xai.SystemContent{Text: "You are a helpful assistant."}).
+//	    UserMessage(xai.UserContent{Text: "What is the capital of France?"}).
 //	    WithMaxTokens(100).
 //	    WithTemperature(0.7)
 //
@@ -60,8 +60,8 @@
 //
 //	// First turn: enable storage
 //	req1 := xai.NewChatRequest().
-//	    SystemMessage("You are helpful.").
-//	    UserMessage("My name is Bob.").
+//	    SystemMessage(xai.SystemContent{Text: "You are helpful."}).
+//	    UserMessage(xai.UserContent{Text: "My name is Bob."}).
 //	    WithStoreMessages(true)
 //
 //	resp1, _ := client.CompleteChat(ctx, req1)
@@ -70,7 +70,7 @@
 //	req2 := xai.NewChatRequest().
 //	    WithPreviousResponseId(resp1.ID).
 //	    WithStoreMessages(true).
-//	    UserMessage("What is my name?")
+//	    UserMessage(xai.UserContent{Text: "What is my name?"})
 //
 //	resp2, _ := client.CompleteChat(ctx, req2)
 //	// resp2 will reference "Bob" from server-side context
@@ -86,7 +86,7 @@
 //	    WithParameters(`{"type": "object", "properties": {"city": {"type": "string"}}}`)
 //
 //	req := xai.NewChatRequest().
-//	    UserMessage("What's the weather in Paris?").
+//	    UserMessage(xai.UserContent{Text: "What's the weather in Paris?"}).
 //	    AddTool(tool).
 //	    WithToolChoice(xai.ToolChoiceAuto)
 //

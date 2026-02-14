@@ -266,16 +266,16 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 		if useResponseId && lastResponseId != "" {
 			// Use server-side context - only send the new message
 			req.WithPreviousResponseId(lastResponseId).
-				UserMessage(input)
+				UserMessage(xai.UserContent{Text: input})
 		} else {
 			// Use client-side history - send everything
-			req.SystemMessage(systemPrompt)
+			req.SystemMessage(xai.SystemContent{Text: systemPrompt})
 			for _, msg := range history {
 				switch msg.role {
 				case "user":
-					req.UserMessage(msg.content)
+					req.UserMessage(xai.UserContent{Text: msg.content})
 				case "assistant":
-					req.AssistantMessage(msg.content)
+					req.AssistantMessage(xai.AssistantContent{Text: msg.content})
 				}
 			}
 		}
@@ -677,8 +677,8 @@ func runAutomatedTests(client *xai.Client) error {
 	// Test 3: Simple chat completion
 	fmt.Println("=== Chat completion ===")
 	req := xai.NewChatRequest().
-		SystemMessage("You are a helpful assistant. Be concise.").
-		UserMessage("What is the capital of France?").
+		SystemMessage(xai.SystemContent{Text: "You are a helpful assistant. Be concise."}).
+		UserMessage(xai.UserContent{Text: "What is the capital of France?"}).
 		WithMaxTokens(100)
 
 	resp, err := client.CompleteChat(ctx, req)
@@ -693,8 +693,8 @@ func runAutomatedTests(client *xai.Client) error {
 	// Test 4: Streaming chat
 	fmt.Println("=== Streaming chat ===")
 	streamReq := xai.NewChatRequest().
-		SystemMessage("You are a helpful assistant.").
-		UserMessage("Count from 1 to 5, one number per line.").
+		SystemMessage(xai.SystemContent{Text: "You are a helpful assistant."}).
+		UserMessage(xai.UserContent{Text: "Count from 1 to 5, one number per line."}).
 		WithMaxTokens(100)
 
 	stream, err := client.StreamChat(ctx, streamReq)
