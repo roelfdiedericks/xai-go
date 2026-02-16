@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-14
+
+### Added
+
+- **Reasoning support in interactive client** - `/reasoning` command with configurable effort levels (off, low, medium, high)
+- **Live thinking traces** - `[Thinking]` blocks stream in real-time when using `grok-3-mini` (only model that returns visible `reasoning_content`)
+- **Model compatibility checks** - Server-side tools (web, x, code) only work with grok-4 family models
+- **Debug mode** - `XAI_DEBUG=1` environment variable shows raw chunk fields during streaming
+
+### Changed
+
+- Reasoning enabled by default at high effort in interactive client
+- Server-side tools auto-disabled when switching to non-grok-4 models
+- Warnings displayed when enabling tools on unsupported models
+
+### Fixed
+
+- Help text updated with reasoning command documentation
+- Model notes clarify which models support reasoning traces vs server tools
+
 ## [0.4.0] - 2026-02-14
 
 ### Added
@@ -27,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Integration tests now always run fresh (`-count=1`) instead of returning cached results
+- Empty assistant messages (tool-only responses) no longer cause errors when switching to history mode
+- Simplified interactive client context management - removed `/context store` command; storage is now automatically enabled when using `response_id` mode (required for chaining)
 
 ## [0.3.0] - 2026-02-14
 
@@ -78,6 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Structured errors** - Error types with codes, retryability, and gRPC status mapping
 - **Interactive test client** - REPL for manual testing with chat and image generation
 
+[0.5.0]: https://github.com/roelfdiedericks/xai-go/releases/tag/v0.5.0
 [0.4.0]: https://github.com/roelfdiedericks/xai-go/releases/tag/v0.4.0
 [0.3.0]: https://github.com/roelfdiedericks/xai-go/releases/tag/v0.3.0
 [0.2.0]: https://github.com/roelfdiedericks/xai-go/releases/tag/v0.2.0

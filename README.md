@@ -285,13 +285,18 @@ Commands within the REPL:
 - `/info` - Show current settings
 - `/context` - Show context mode (response_id vs history)
 - `/context mode` - Toggle between server-side (response_id) and client-side (history) context
-- `/context store` - Toggle server-side message storage
+- `/reasoning` - Show reasoning settings
+- `/reasoning <level>` - Set reasoning effort (off, low, medium, high)
 - `/tools` - Show enabled tools
 - `/tools <name>` - Toggle tool (web, x, code, all, off)
 - `/image <prompt>` - Generate an image (options: `-wide`, `-tall`, `-2k`)
 - `/image-model` - Show/change image model
 - `/image-models` - List available image models
 - `/quit` - Exit
+
+**Model capabilities:**
+- Server-side tools (web, x, code) only work with `grok-4` family models
+- Visible thinking traces (`[Thinking]` blocks) only available with `grok-3-mini`
 
 You can also run it directly with flags:
 

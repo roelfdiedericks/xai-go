@@ -67,6 +67,22 @@ func (t *toolSettings) String() string {
 	return strings.Join(enabled, ", ")
 }
 
+func (t *toolSettings) hasServerTools() bool {
+	return t.webSearch || t.xSearch || t.codeExecution
+}
+
+func (t *toolSettings) disableServerTools() {
+	t.webSearch = false
+	t.xSearch = false
+	t.codeExecution = false
+}
+
+// supportsServerTools checks if a model supports server-side tools (web, x, code)
+// Only grok-4 family models support these tools
+func supportsServerTools(model string) bool {
+	return strings.HasPrefix(model, "grok-4")
+}
+
 func runInteractive(client *xai.Client, model, systemPrompt string, stream bool) error {
 	if model == "" {
 		model = client.DefaultModel()
@@ -80,17 +96,27 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 		codeExecution: true,
 	}
 
-	// Context management - default to using response ID mode with storage
+	// Context management - default to using response ID mode
+	// Storage is automatically enabled when using response_id mode (required)
 	useResponseId := true
-	storeMessages := true
 	var lastResponseId string
+
+	// Reasoning/thinking - enabled by default at high effort
+	// Note: Only grok-3-mini returns visible reasoning_content
+	// Other models may still use reasoning internally without exposing traces
+	reasoningEnabled := true
+	reasoningEffort := xai.ReasoningEffortHigh
 
 	fmt.Println("=== xAI Interactive Chat ===")
 	fmt.Printf("Model: %s\n", model)
 	fmt.Printf("Streaming: %v\n", stream)
 	fmt.Printf("Tools: %s\n", tools)
-	fmt.Printf("Context: %s\n", contextModeString(useResponseId, storeMessages))
-	fmt.Println("Commands: /help, /model, /system, /stream, /tools, /context, /image, /quit")
+	fmt.Printf("Context: %s\n", contextModeString(useResponseId))
+	fmt.Printf("Reasoning: %s\n", reasoningString(reasoningEnabled, reasoningEffort))
+	if reasoningEnabled {
+		printReasoningModelNote(model)
+	}
+	fmt.Println("Commands: /help, /model, /system, /stream, /tools, /context, /reasoning, /image, /quit")
 	fmt.Println("---")
 
 	reader := bufio.NewReader(os.Stdin)
@@ -147,6 +173,11 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 			case strings.HasPrefix(input, "/model "):
 				model = strings.TrimPrefix(input, "/model ")
 				fmt.Printf("Model changed to: %s\n", model)
+				// Server-side tools only work with grok-4 family
+				if !supportsServerTools(model) && tools.hasServerTools() {
+					tools.disableServerTools()
+					fmt.Println("  Note: Server-side tools disabled (only grok-4 models support them)")
+				}
 				continue
 
 			case strings.HasPrefix(input, "/system "):
@@ -214,38 +245,64 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 				default:
 					fmt.Println("Unknown tool. Options: web, x, code, all, off")
 				}
-				continue
-
-			case input == "/context" || input == "/ctx":
-				fmt.Printf("Context mode: %s\n", contextModeString(useResponseId, storeMessages))
-				fmt.Println("Usage: /context mode|store")
-				fmt.Println("  mode  - Toggle between response_id (server) and history (client)")
-				fmt.Println("  store - Toggle server-side message storage")
-				if lastResponseId != "" {
-					fmt.Printf("Last response ID: %s\n", lastResponseId)
+				// Warn if enabling tools on non-grok-4 model
+				if tools.hasServerTools() && !supportsServerTools(model) {
+					fmt.Printf("  Warning: %s doesn't support server-side tools (only grok-4 models)\n", model)
 				}
 				continue
 
+			case input == "/context" || input == "/ctx":
+				fmt.Printf("Context mode: %s\n", contextModeString(useResponseId))
+				if lastResponseId != "" {
+					fmt.Printf("Last response ID: %s\n", lastResponseId)
+				}
+				fmt.Println("Use /context to toggle between modes")
+				continue
+
 			case strings.HasPrefix(input, "/context "):
-				arg := strings.TrimPrefix(input, "/context ")
-				switch arg {
-				case "mode":
-					useResponseId = !useResponseId
-					if useResponseId {
-						fmt.Println("Context mode: response_id (server-side)")
-						fmt.Println("Conversation will use previous_response_id for context")
-					} else {
-						fmt.Println("Context mode: history (client-side)")
-						fmt.Println("Full message history will be sent with each request")
-					}
-				case "store":
-					storeMessages = !storeMessages
-					fmt.Printf("Store messages: %v\n", storeMessages)
-					if !storeMessages && useResponseId {
-						fmt.Println("Warning: response_id mode requires storage to be enabled")
-					}
+				// Toggle mode (ignore any argument for simplicity)
+				useResponseId = !useResponseId
+				if useResponseId {
+					fmt.Println("Context mode: response_id (server-side)")
+					fmt.Println("Conversation will use previous_response_id for context")
+					fmt.Println("Storage: automatically enabled (required)")
+				} else {
+					fmt.Println("Context mode: history (client-side)")
+					fmt.Println("Full message history will be sent with each request")
+				}
+				continue
+
+			case input == "/reasoning" || input == "/r":
+				fmt.Printf("Reasoning: %s\n", reasoningString(reasoningEnabled, reasoningEffort))
+				if reasoningEnabled {
+					printReasoningModelNote(model)
+				}
+				fmt.Println("Usage: /reasoning off|low|medium|high")
+				continue
+
+			case strings.HasPrefix(input, "/reasoning "):
+				arg := strings.TrimPrefix(input, "/reasoning ")
+				switch strings.ToLower(arg) {
+				case "off", "none", "disable":
+					reasoningEnabled = false
+					fmt.Println("Reasoning: disabled")
+				case "low", "l":
+					reasoningEnabled = true
+					reasoningEffort = xai.ReasoningEffortLow
+					fmt.Println("Reasoning: low effort")
+					printReasoningModelNote(model)
+				case "medium", "med", "m":
+					reasoningEnabled = true
+					reasoningEffort = xai.ReasoningEffortMedium
+					fmt.Println("Reasoning: medium effort")
+					printReasoningModelNote(model)
+				case "high", "h", "max":
+					reasoningEnabled = true
+					reasoningEffort = xai.ReasoningEffortHigh
+					fmt.Println("Reasoning: high effort")
+					printReasoningModelNote(model)
 				default:
-					fmt.Println("Unknown option. Use: mode, store")
+					fmt.Println("Unknown level. Options: off, low, medium, high")
 				}
 				continue
 
@@ -259,9 +316,10 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 		history = append(history, &message{role: "user", content: input})
 
 		// Build request based on context mode
+		// Storage is automatically enabled in response_id mode (required for chaining)
 		req := xai.NewChatRequest().
 			WithModel(model).
-			WithStoreMessages(storeMessages)
+			WithStoreMessages(useResponseId)
 
 		if useResponseId && lastResponseId != "" {
 			// Use server-side context - only send the new message
@@ -275,7 +333,11 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 				case "user":
 					req.UserMessage(xai.UserContent{Text: msg.content})
 				case "assistant":
-					req.AssistantMessage(xai.AssistantContent{Text: msg.content})
+					// Skip empty assistant messages (e.g., tool-only responses)
+					// xAI requires at least one content element per message
+					if msg.content != "" {
+						req.AssistantMessage(xai.AssistantContent{Text: msg.content})
+					}
 				}
 			}
 		}
@@ -289,6 +351,11 @@ func runInteractive(client *xai.Client, model, systemPrompt string, stream bool)
 		}
 		if tools.codeExecution {
 			req.AddTool(xai.NewCodeExecutionTool())
+		}
+
+		// Add reasoning effort if enabled
+		if reasoningEnabled {
+			req.WithReasoningEffort(reasoningEffort)
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -335,9 +402,12 @@ func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatReques
 	}
 
 	var content strings.Builder
+	var reasoning strings.Builder
 	var responseId string
 	var toolCalls []*xai.ToolCallInfo
 	var citations []string
+	reasoningStarted := false
+	reasoningEnded := false
 	contentStarted := false
 	hadTools := false
 
@@ -355,6 +425,26 @@ func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatReques
 			responseId = chunk.ID
 		}
 
+		// Debug: show raw chunk fields when XAI_DEBUG is set
+		if os.Getenv("XAI_DEBUG") != "" {
+			if chunk.ReasoningDelta != "" || chunk.Delta != "" || len(chunk.ToolCalls) > 0 {
+				fmt.Printf("\n[DEBUG] ReasoningDelta=%q Delta=%q ToolCalls=%d\n",
+					truncateStr(chunk.ReasoningDelta, 50),
+					truncateStr(chunk.Delta, 50),
+					len(chunk.ToolCalls))
+			}
+		}
+
+		// Stream reasoning delta live (only grok-3-mini returns this)
+		if chunk.ReasoningDelta != "" {
+			if !reasoningStarted {
+				fmt.Print("\n[Thinking] ")
+				reasoningStarted = true
+			}
+			fmt.Print(chunk.ReasoningDelta)
+			reasoning.WriteString(chunk.ReasoningDelta)
+		}
+
 		// Announce tools as they arrive with status
 		for _, tc := range chunk.ToolCalls {
 			hadTools = true
@@ -364,6 +454,12 @@ func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatReques
 				status = "completed"
 			case xai.ToolCallStatusFailed:
 				status = "failed"
+			}
+
+			// End reasoning section before tools if not already ended
+			if reasoningStarted && !reasoningEnded {
+				fmt.Println("\n[/Thinking]")
+				reasoningEnded = true
 			}
 
 			if tc.Function != nil {
@@ -377,9 +473,14 @@ func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatReques
 			}
 		}
 
-		// Print newline before first content if we had tool calls
+		// Print newline/separator before first content
 		if chunk.Delta != "" && !contentStarted {
-			if hadTools {
+			// End reasoning section before content if not already ended
+			if reasoningStarted && !reasoningEnded {
+				fmt.Println("\n[/Thinking]")
+			fmt.Println()
+				reasoningEnded = true
+			} else if hadTools {
 				fmt.Println()
 			}
 			contentStarted = true
@@ -395,6 +496,11 @@ func streamResponse(ctx context.Context, client *xai.Client, req *xai.ChatReques
 		}
 	}
 
+	// End reasoning section if it was started but never properly ended
+	if reasoningStarted && !reasoningEnded {
+		fmt.Println("\n[/Thinking]")
+	}
+
 	// Display tool calls if any
 	displayToolCalls(toolCalls)
 	displayCitations(citations)
@@ -407,6 +513,15 @@ func blockingResponse(ctx context.Context, client *xai.Client, req *xai.ChatRequ
 	if err != nil {
 		return "", "", err
 	}
+
+	// Display reasoning if present
+	if resp.ReasoningContent != "" {
+		fmt.Println("[Thinking]")
+		fmt.Println(resp.ReasoningContent)
+		fmt.Println("[/Thinking]")
+		fmt.Println()
+	}
+
 	fmt.Print(resp.Content)
 
 	// Display tool calls if any
@@ -476,9 +591,11 @@ Commands:
   /system <prompt>     Change the system prompt
   /tools, /t           Show enabled tools
   /tools <name>        Toggle tool (web, x, code, all, off)
-  /context, /ctx       Show context mode and storage settings
+  /context, /ctx       Show context mode (toggle with /context mode)
   /context mode        Toggle between response_id (server) and history (client)
-  /context store       Toggle server-side message storage
+  /reasoning, /r       Show reasoning settings
+  /reasoning <level>   Set reasoning level (off, low, medium, high)
+                       Note: Only grok-3-mini shows visible thinking traces
   /image <prompt>      Generate an image (options: -wide, -tall, -2k)
   /image-model         Show current image model
   /image-model <name>  Change the image model
@@ -486,16 +603,43 @@ Commands:
 `)
 }
 
-func contextModeString(useResponseId, storeMessages bool) string {
-	mode := "history (client)"
+func contextModeString(useResponseId bool) string {
 	if useResponseId {
-		mode = "response_id (server)"
+		return "response_id (server-side, storage: on)"
 	}
-	store := "off"
-	if storeMessages {
-		store = "on"
+	return "history (client-side)"
+}
+
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
 	}
-	return fmt.Sprintf("%s, storage: %s", mode, store)
+	return s[:maxLen] + "..."
+}
+
+func printReasoningModelNote(model string) {
+	// Per xAI docs: Only grok-3-mini returns visible reasoning_content
+	// grok-4-1-fast-reasoning may work differently (not documented)
+	if !strings.Contains(model, "grok-3-mini") && !strings.Contains(model, "grok-4-1") {
+		fmt.Println("  Note: Only grok-3-mini returns visible thinking traces.")
+		fmt.Println("  Use /model grok-3-mini to see [Thinking] output.")
+	}
+}
+
+func reasoningString(enabled bool, effort xai.ReasoningEffort) string {
+	if !enabled {
+		return "off"
+	}
+	switch effort {
+	case xai.ReasoningEffortLow:
+		return "low"
+	case xai.ReasoningEffortMedium:
+		return "medium"
+	case xai.ReasoningEffortHigh:
+		return "high"
+	default:
+		return "on"
+	}
 }
 
 func printInfo(client *xai.Client, model, systemPrompt string, stream bool, historyLen int) {
